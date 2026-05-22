@@ -2,6 +2,34 @@
 
 All notable changes to `@btx-tools/mcp-gateway` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) + [SemVer](https://semver.org/).
 
+## [0.2.0] - 2026-05-23
+
+Minor release — AbortSignal plumbing end-to-end. Closes the last remaining audit finding from `internal notes` (MED-8).
+
+### Added
+
+- **MCP `extra.signal` is now forwarded to `client.issue()` and `client.redeem()`** as `RpcCallOpts.signal`. When the MCP transport fires an abort (agent client cancellation, host process shutdown, etc.), the in-flight BTX RPC is cancelled at the fetch layer instead of running to its timeout.
+
+  Behavior:
+  - Pre-aborted signal at call entry → `client.issue`/`redeem` throws `BtxNetworkError` immediately, no request sent, wrapper returns the sanitized internal-error response with `gate.onError` fired
+  - Abort mid-request → fetch aborted, `BtxNetworkError` thrown, same response path
+  - Abort during retry backoff (if the SDK client is configured with retries) → backoff interrupted, retry loop exits
+
+  This pairs with `@btx-tools/challenges-sdk@0.2.0`, which added the `RpcCallOpts.signal` API surface.
+
+### Changed
+
+- **Peer dependency on `@btx-tools/challenges-sdk` bumped to `^0.2.0`** (was `^0.1.1`). Required because the AbortSignal forwarding uses the new `RpcCallOpts` parameter that only exists in `0.2.0+`. Adopters who upgrade `@btx-tools/mcp-gateway` must also upgrade the SDK to `0.2.0` or later — this is why the version bump is MINOR (0.1.x → 0.2.x) rather than PATCH.
+- **`devDependencies['@btx-tools/challenges-sdk']` bumped to `^0.2.0`** for local dev consistency.
+
+### Test delta
+
+23 → 25 tests (+2 new: `forwards MCP extra.signal to client.issue() as RpcCallOpts` + `forwards MCP extra.signal to client.redeem() as RpcCallOpts`). Existing `calls client.issue with the resolved purpose/resource/subject` test updated to expect the trailing `{ signal: undefined }` opts arg.
+
+### Audit status
+
+All findings from the 2026-05-23 deep audit now CLOSED. The previously-deferred MED-8 (AbortSignal plumbing) ships in this release alongside the SDK 0.2.0 update.
+
 ## [0.1.1] - 2026-05-23
 
 Patch release bundling the `zod` peerDep fix plus all 15 findings from the same-day deep audit (`internal notes`). **Recommended upgrade for all `0.1.0` consumers** — fixes one security-adjacent error-leakage path, one defense-in-depth binding-override path, several Express-middleware-parity feature gaps, and a handful of papercuts.

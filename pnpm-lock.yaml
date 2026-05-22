@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       '@btx-tools/challenges-sdk':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: ^0.2.0
+        version: 0.2.0
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@3.25.76)
@@ -38,8 +38,8 @@ importers:
 
 packages:
 
-  '@btx-tools/challenges-sdk@0.1.1':
-    resolution: {integrity: sha512-cxDqIjLK4iosHwP0PxLSR+fXFXyGCqwOvsH/l48rW9laG9qM/GBXcsNvdvTE3cKDUd8Lkae/JN27Pr2c5qmQpw==}
+  '@btx-tools/challenges-sdk@0.2.0':
+    resolution: {integrity: sha512-ISWTawWImfGPtg2JRNz6nz+DFsoFbIiPNMTS2Jclc3uhvlVE4eqr0U53iVoc8aCyFlY/voLvy53XecEGTGzrCw==}
     engines: {node: '>=18.17'}
 
   '@esbuild/aix-ppc64@0.21.5':
@@ -1403,7 +1403,7 @@ packages:
 
 snapshots:
 
-  '@btx-tools/challenges-sdk@0.1.1':
+  '@btx-tools/challenges-sdk@0.2.0':
     dependencies:
       '@noble/hashes': 2.2.0
 

@@ -202,6 +202,11 @@ export function btxToolWrapper<InputArgs extends ZodRawShape>(
     const { btx_proof, ...userArgs } = args;
     const typedUserArgs = userArgs as { [K in keyof InputArgs]: z.infer<InputArgs[K]> };
 
+    // 0.2.0: forward MCP transport's AbortSignal to the BTX RPC client so an
+    // agent client that cancels a tool call mid-issue or mid-redeem propagates
+    // through to fetch-level cancellation. Closes audit MED-8.
+    const signal = _extra.signal;
+
     // First call: no proof → issue and return challenge envelope
     if (!btx_proof) {
       try {
@@ -211,12 +216,15 @@ export function btxToolWrapper<InputArgs extends ZodRawShape>(
         // Audit HIGH-2: explicit (purpose, resource, subject) MUST come AFTER
         // the spread so issueParams can never override the admission binding,
         // even via runtime injection or TypeScript bypass.
-        const challenge = await def.gate.client.issue({
-          ...def.gate.issueParams,
-          purpose,
-          resource,
-          subject,
-        });
+        const challenge = await def.gate.client.issue(
+          {
+            ...def.gate.issueParams,
+            purpose,
+            resource,
+            subject,
+          },
+          { signal },
+        );
         return challengeEnvelope(challenge);
       } catch (err) {
         def.gate.onError?.(err, typedUserArgs);
@@ -234,6 +242,7 @@ export function btxToolWrapper<InputArgs extends ZodRawShape>(
         btx_proof.challenge as Challenge,
         btx_proof.nonce64_hex,
         btx_proof.digest_hex,
+        { signal },
       );
     } catch (err) {
       def.gate.onError?.(err, typedUserArgs);

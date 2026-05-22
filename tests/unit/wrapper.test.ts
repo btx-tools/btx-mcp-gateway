@@ -148,13 +148,18 @@ describe('btxToolWrapper', () => {
         },
       });
       await tool.callback({ q: 'abc' }, {} as never);
-      expect(client.issue).toHaveBeenCalledWith({
-        purpose: 'rate_limit',
-        resource: 'r:abc',
-        subject: 'static_subject',
-        target_solve_time_s: 0.001,
-        expires_in_s: 60,
-      });
+      expect(client.issue).toHaveBeenCalledWith(
+        {
+          purpose: 'rate_limit',
+          resource: 'r:abc',
+          subject: 'static_subject',
+          target_solve_time_s: 0.001,
+          expires_in_s: 60,
+        },
+        // 0.2.0 plumbs the MCP extra.signal as RpcCallOpts to SDK 0.2.0+.
+        // Empty extra → signal is undefined.
+        { signal: undefined },
+      );
     });
 
     it('returns sanitized isError if client.issue throws (stage=issue)', async () => {
@@ -236,6 +241,33 @@ describe('btxToolWrapper', () => {
       expect(issueArg.purpose).toBe('admission');
       expect(issueArg.resource).toBe('tool:safe');
       expect(issueArg.subject).toBe('tenant_42');
+    });
+
+    it('forwards MCP extra.signal to client.issue() as RpcCallOpts (0.2.0)', async () => {
+      const issueMock = vi.fn(async () => STUB_CHALLENGE);
+      const client = {
+        issue: issueMock,
+        redeem: vi.fn(),
+        verify: vi.fn(),
+        solve: vi.fn(),
+        verifyBatch: vi.fn(),
+        redeemBatch: vi.fn(),
+        call: vi.fn(),
+      } as unknown as BtxChallengeClient;
+      const tool = btxToolWrapper({
+        name: 't',
+        inputSchema: { q: z.string() },
+        handler: async () => ({ content: [] }),
+        gate: { client, purpose: 'p', resource: 'r', subject: 's', issueParams: {} },
+      });
+      const ctrl = new AbortController();
+      await tool.callback(
+        { q: 'x' },
+        // Minimal MCP extra shape — just the signal we want to forward
+        { signal: ctrl.signal } as never,
+      );
+      const opts = issueMock.mock.calls[0]![1] as { signal?: AbortSignal };
+      expect(opts.signal).toBe(ctrl.signal);
     });
   });
 
@@ -339,6 +371,32 @@ describe('btxToolWrapper', () => {
       // Audit HIGH-1: blockchain state details must not leak
       expect(parsed.message).not.toContain('UTXO');
       expect(parsed.message).not.toContain('0xdeadbeef');
+    });
+
+    it('forwards MCP extra.signal to client.redeem() as RpcCallOpts (0.2.0)', async () => {
+      const redeemMock = vi.fn(async () => ({ valid: true, reason: 'ok', redeemed: true }));
+      const client = {
+        issue: vi.fn(async () => STUB_CHALLENGE),
+        redeem: redeemMock,
+        verify: vi.fn(),
+        solve: vi.fn(),
+        verifyBatch: vi.fn(),
+        redeemBatch: vi.fn(),
+        call: vi.fn(),
+      } as unknown as BtxChallengeClient;
+      const tool = btxToolWrapper({
+        name: 't',
+        inputSchema: { q: z.string() },
+        handler: async () => ({ content: [] }),
+        gate: { client, purpose: 'p', resource: 'r', subject: 's', issueParams: {} },
+      });
+      const ctrl = new AbortController();
+      await tool.callback(
+        validProofArgs,
+        { signal: ctrl.signal } as never,
+      );
+      const opts = redeemMock.mock.calls[0]![3] as { signal?: AbortSignal };
+      expect(opts.signal).toBe(ctrl.signal);
     });
 
     it('fires onAdmit hook on successful admission', async () => {
