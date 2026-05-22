@@ -40,15 +40,28 @@ export function createBtxMcpServer(opts: CreateBtxMcpServerOpts): McpServer {
   );
 
   for (const tool of opts.tools) {
+    // Audit MED-4/5: forward title, outputSchema, annotations, _meta when
+    // adopters supplied them via BtxToolDefinition. Without this they were
+    // silently dropped in 0.1.0. The MCP SDK's registerTool has multiple
+    // generic overloads → Parameters<...>[1] resolves to `never`; use a
+    // structural record + cast at the call site instead.
+    const config: Record<string, unknown> = {
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+    };
+    if (tool.title !== undefined) config.title = tool.title;
+    if (tool.outputSchema !== undefined) config.outputSchema = tool.outputSchema;
+    if (tool.annotations !== undefined) config.annotations = tool.annotations;
+    if (tool._meta !== undefined) config._meta = tool._meta;
+
     server.registerTool(
       tool.name,
-      {
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      config as any,
       // The MCP SDK passes parsed-and-validated args + extra context; our
       // wrapper signature matches.
-      tool.callback as Parameters<typeof server.registerTool>[2],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      tool.callback as any,
     );
   }
 

@@ -24,6 +24,7 @@ export {
   btxToolWrapper,
   BTX_CHALLENGE_MARKER,
   BTX_ADMISSION_FAILED_MARKER,
+  BTX_INTERNAL_ERROR_MARKER,
 } from './wrapper.js';
 export type {
   BtxProofPayload,

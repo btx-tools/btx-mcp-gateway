@@ -195,7 +195,7 @@ describe('end-to-end MCP flow with BTX admission', () => {
         },
       },
     })) as CallResult;
-    expect(result.isError).toBeFalsy();
+    expect(result.isError).toBeUndefined();
     const text = result.content[0]?.text;
     expect(text).toBe('searched: hello');
     await client.close();

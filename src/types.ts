@@ -15,6 +15,7 @@ import type {
   ServerNotification,
   ServerRequest,
   CallToolResult,
+  ToolAnnotations,
 } from '@modelcontextprotocol/sdk/types.js';
 
 /**
@@ -42,8 +43,30 @@ export interface BtxGateOptions<Args> {
   purpose: StringOrFn<Args>;
   resource: StringOrFn<Args>;
   subject: StringOrFn<Args>;
-  /** Forwarded to `client.issue()` — e.g. `target_solve_time_s`, `expires_in_s`. */
+  /**
+   * Forwarded to `client.issue()` — e.g. `target_solve_time_s`,
+   * `expires_in_s`. `purpose`, `resource`, `subject` are deliberately
+   * excluded from this type (they must come from the top-level options) AND
+   * the wrapper spreads issueParams BEFORE the explicit binding fields so
+   * runtime injection can't override the admission binding either. Audit
+   * HIGH-2 defense-in-depth.
+   */
   issueParams?: Partial<Omit<IssueParams, 'purpose' | 'resource' | 'subject'>>;
+  /**
+   * Optional hook fired exactly once when `client.issue()` or
+   * `client.redeem()` throws, before the wrapper returns the sanitized
+   * internal-error response. Use this to log/observe the underlying error
+   * (which is NOT exposed to the agent caller for security reasons —
+   * audit HIGH-1). Mirrors the `onError` hook in `middleware-express` 0.2.0.
+   */
+  onError?: (err: unknown, args: Args) => void;
+  /**
+   * Optional hook fired exactly once on successful admission, BEFORE the
+   * user handler runs. Use this for observability — log admission events,
+   * record metrics, track per-(purpose, resource, subject) admission rates.
+   * Mirrors the `onAdmit` hook in `middleware-express`.
+   */
+  onAdmit?: (args: Args, result: VerifyResult) => void;
 }
 
 /**
@@ -73,12 +96,34 @@ export type BtxToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification
  */
 export interface BtxToolDefinition<InputArgs extends ZodRawShape> {
   name: string;
+  /** Human-readable display title. Forwarded to MCP `registerTool({ title })`. */
+  title?: string;
   description?: string;
   /**
    * Zod raw shape for the tool's input arguments. We inject an optional
    * `btx_proof` field automatically — DO NOT define one yourself.
    */
   inputSchema: InputArgs;
+  /**
+   * Optional output schema. Forwarded to MCP `registerTool({ outputSchema })`
+   * so clients can introspect + validate the tool's return shape.
+   * Audit MED-4.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  outputSchema?: ZodRawShape | any;
+  /**
+   * Optional MCP tool annotations (`readOnlyHint`, `destructiveHint`,
+   * `idempotentHint`, `openWorldHint`, `title`). Forwarded to MCP
+   * `registerTool({ annotations })`. Strongly recommended for mutation
+   * tools so clients can require user confirmation. Audit MED-5.
+   */
+  annotations?: ToolAnnotations;
+  /**
+   * Optional `_meta` extension field forwarded to MCP `registerTool({ _meta })`.
+   * Use for custom metadata (cost tier, billing tag, audit hint, etc.).
+   * Audit LOW (Angle E #4).
+   */
+  _meta?: Record<string, unknown>;
   /**
    * Tool handler — runs only on successful admission. Receives parsed args
    * (typed from `inputSchema`) and a `BtxToolExtra` with admission context.
@@ -112,6 +157,7 @@ export interface CreateBtxMcpServerOpts {
  */
 export interface WrappedBtxTool<InputArgs extends ZodRawShape> {
   name: string;
+  title?: string;
   description: string | undefined;
   /** The user's inputSchema merged with our injected `btx_proof` field. */
   inputSchema: InputArgs & { btx_proof: z.ZodOptional<z.ZodObject<{
@@ -119,6 +165,10 @@ export interface WrappedBtxTool<InputArgs extends ZodRawShape> {
     nonce64_hex: z.ZodString;
     digest_hex: z.ZodString;
   }>> };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  outputSchema?: ZodRawShape | any;
+  annotations?: ToolAnnotations;
+  _meta?: Record<string, unknown>;
   /** The internal callback handed to `server.registerTool`. Don't call directly. */
   callback: (
     args: unknown,

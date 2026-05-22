@@ -157,10 +157,10 @@ describe('btxToolWrapper', () => {
       });
     });
 
-    it('returns isError if client.issue throws (stage=issue)', async () => {
+    it('returns sanitized isError if client.issue throws (stage=issue)', async () => {
       const client = mockClient({
         issue: async () => {
-          throw new Error('btxd unreachable');
+          throw new Error('connect ECONNREFUSED http://10.20.30.40:19332');
         },
       });
       const tool = makeSampleTool(client);
@@ -169,7 +169,73 @@ describe('btxToolWrapper', () => {
       const parsed = JSON.parse((result.content[0] as { text: string }).text);
       expect(parsed.btx_internal_error).toBe(true);
       expect(parsed.stage).toBe('issue');
-      expect(parsed.message).toContain('btxd unreachable');
+      // Audit HIGH-1: the raw error message MUST NOT leak to the agent
+      expect(parsed.message).not.toContain('ECONNREFUSED');
+      expect(parsed.message).not.toContain('10.20.30.40');
+    });
+
+    it('fires onError hook with the raw error (issue stage)', async () => {
+      const rawErr = new Error('btxd unreachable: http://10.20.30.40:19332');
+      const client = mockClient({
+        issue: async () => {
+          throw rawErr;
+        },
+      });
+      const onError = vi.fn();
+      const tool = btxToolWrapper({
+        name: 't',
+        inputSchema: { q: z.string() },
+        handler: async () => ({ content: [] }),
+        gate: {
+          client,
+          purpose: 'p',
+          resource: 'r',
+          subject: 's',
+          onError,
+          issueParams: {},
+        },
+      });
+      await tool.callback({ q: 'x' }, {} as never);
+      expect(onError).toHaveBeenCalledOnce();
+      expect(onError.mock.calls[0]![0]).toBe(rawErr);
+    });
+
+    it('issueParams cannot override the (purpose, resource, subject) binding', async () => {
+      // Defense-in-depth (audit HIGH-2): even if a JS adopter or `as any`
+      // bypass injects purpose/resource/subject into issueParams, the wrapper
+      // must spread issueParams FIRST so the explicit fields win.
+      const issueMock = vi.fn(async (_params: Record<string, unknown>) => STUB_CHALLENGE);
+      const client = {
+        issue: issueMock,
+        redeem: vi.fn(async () => ({ valid: true, reason: 'ok', redeemed: true })),
+        verify: vi.fn(),
+        solve: vi.fn(),
+        verifyBatch: vi.fn(),
+        redeemBatch: vi.fn(),
+        call: vi.fn(),
+      } as unknown as BtxChallengeClient;
+      const tool = btxToolWrapper({
+        name: 't',
+        inputSchema: { q: z.string() },
+        handler: async () => ({ content: [] }),
+        gate: {
+          client,
+          purpose: 'admission',
+          resource: 'tool:safe',
+          subject: 'tenant_42',
+          // Hostile injection via TS bypass:
+          issueParams: {
+            purpose: 'unrestricted',
+            resource: 'tool:dangerous',
+            subject: 'tenant_admin',
+          } as never,
+        },
+      });
+      await tool.callback({ q: 'x' }, {} as never);
+      const issueArg = issueMock.mock.calls[0]![0] as Record<string, unknown>;
+      expect(issueArg.purpose).toBe('admission');
+      expect(issueArg.resource).toBe('tool:safe');
+      expect(issueArg.subject).toBe('tenant_42');
     });
   });
 
@@ -185,9 +251,11 @@ describe('btxToolWrapper', () => {
 
     it('invokes the user handler on valid proof', async () => {
       const client = mockClient();
-      const handler = vi.fn(async ({ query }) => ({
-        content: [{ type: 'text', text: `handled: ${query}` }],
-      }));
+      const handler = vi.fn(
+        async (_args: { query: string }, _extra: { btx: { result: VerifyResult } }) => ({
+          content: [{ type: 'text' as const, text: `handled: ${_args.query}` }],
+        }),
+      );
       const tool = btxToolWrapper({
         name: 'test',
         inputSchema: { query: z.string() },
@@ -203,11 +271,12 @@ describe('btxToolWrapper', () => {
       const result = await tool.callback(validProofArgs, {} as never);
       expect(result.isError).toBeUndefined();
       expect(handler).toHaveBeenCalledOnce();
-      const [args, extra] = handler.mock.calls[0]!;
+      const call = handler.mock.calls[0]!;
+      const [args, extra] = call;
       expect(args).toEqual({ query: 'hello' });
-      expect((args as Record<string, unknown>).btx_proof).toBeUndefined();
+      expect((args as unknown as Record<string, unknown>).btx_proof).toBeUndefined();
       // The injected admission context
-      expect((extra as { btx: { result: VerifyResult } }).btx.result.valid).toBe(true);
+      expect(extra.btx.result.valid).toBe(true);
     });
 
     it('returns admission_failed marker on invalid proof', async () => {
@@ -255,10 +324,10 @@ describe('btxToolWrapper', () => {
       expect(parsed.recovery_hint).toContain('already consumed');
     });
 
-    it('returns isError if client.redeem throws (stage=redeem)', async () => {
+    it('returns sanitized isError if client.redeem throws (stage=redeem)', async () => {
       const client = mockClient({
         redeem: async () => {
-          throw new Error('rpc timeout');
+          throw new Error('HTTP 500: btxd internal: txid 0xdeadbeef state UTXO spent');
         },
       });
       const tool = makeSampleTool(client);
@@ -267,12 +336,54 @@ describe('btxToolWrapper', () => {
       const parsed = JSON.parse((result.content[0] as { text: string }).text);
       expect(parsed.btx_internal_error).toBe(true);
       expect(parsed.stage).toBe('redeem');
+      // Audit HIGH-1: blockchain state details must not leak
+      expect(parsed.message).not.toContain('UTXO');
+      expect(parsed.message).not.toContain('0xdeadbeef');
+    });
+
+    it('fires onAdmit hook on successful admission', async () => {
+      const client = mockClient();
+      const onAdmit = vi.fn();
+      const tool = btxToolWrapper({
+        name: 't',
+        inputSchema: { q: z.string() },
+        handler: async () => ({ content: [] }),
+        gate: { client, purpose: 'p', resource: 'r', subject: 's', onAdmit, issueParams: {} },
+      });
+      await tool.callback(
+        {
+          q: 'hello',
+          btx_proof: { challenge: STUB_CHALLENGE, nonce64_hex: 'aa', digest_hex: 'bb' },
+        },
+        {} as never,
+      );
+      expect(onAdmit).toHaveBeenCalledOnce();
+      const [admitArgs, admitResult] = onAdmit.mock.calls[0]!;
+      expect(admitArgs).toEqual({ q: 'hello' });
+      expect((admitResult as { valid: boolean }).valid).toBe(true);
+    });
+
+    it.each([
+      ['invalid_proof', 'digest computation'],
+      ['challenge_mismatch', 'echoed back does not match'],
+      ['unknown_challenge', 'btxd does not recognize'],
+      ['missing_proof', 'nonce64_hex and btx_proof.digest_hex must both be present'],
+      ['mismatch_field', 'echoed back does not match'],
+    ])('returns reason-specific recovery_hint for %s', async (reason, hintContains) => {
+      const client = mockClient({
+        redeem: async () => ({ valid: false, reason }),
+      });
+      const tool = makeSampleTool(client);
+      const result = await tool.callback(validProofArgs, {} as never);
+      const parsed = JSON.parse((result.content[0] as { text: string }).text);
+      expect(parsed.reason).toBe(reason);
+      expect(parsed.recovery_hint).toContain(hintContains);
     });
 
     it('passes additional user args to the handler unmodified', async () => {
       const client = mockClient();
-      const handler = vi.fn(async (args) => ({
-        content: [{ type: 'text', text: JSON.stringify(args) }],
+      const handler = vi.fn(async (args: { foo: string; bar: number }) => ({
+        content: [{ type: 'text' as const, text: JSON.stringify(args) }],
       }));
       const tool = btxToolWrapper({
         name: 'test',

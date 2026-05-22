@@ -48,8 +48,42 @@ export const BTX_CHALLENGE_MARKER = 'btx_admission_challenge_required';
 /** Marker for an admission failure (proof was present but invalid). */
 export const BTX_ADMISSION_FAILED_MARKER = 'btx_admission_failed';
 
+/**
+ * Marker for an internal/transport error (issue or redeem RPC threw).
+ * Distinct from BTX_ADMISSION_FAILED_MARKER (which is a structured rejection
+ * from btxd, e.g. invalid proof). Internal errors are sanitized — only the
+ * stage is exposed, not the underlying error message, to avoid leaking
+ * server-internal details (btxd URL, RPC method names, response snippets).
+ */
+export const BTX_INTERNAL_ERROR_MARKER = 'btx_internal_error';
+
 function resolve<Args>(value: StringOrFn<Args>, args: Args): string {
   return typeof value === 'function' ? value(args) : value;
+}
+
+/**
+ * Per-reason recovery hint. Audit MED-3: covers all VerifyReason values from
+ * @btx-tools/challenges-sdk's types.ts, with semantically-specific guidance
+ * rather than a single generic fallback.
+ */
+function recoveryHintFor(reason: string): string {
+  switch (reason) {
+    case 'already_redeemed':
+      return 'This proof was already consumed. Call this tool with no btx_proof to get a fresh challenge.';
+    case 'expired':
+      return 'The challenge has expired. Call this tool with no btx_proof to get a fresh one.';
+    case 'invalid_proof':
+      return 'The proof bytes do not match the challenge (digest computation failed or nonce wrong). Re-solve and retry — do not reuse the previous nonce.';
+    case 'challenge_mismatch':
+    case 'mismatch_field':
+      return 'The challenge envelope echoed back does not match what was issued for this (purpose, resource, subject) binding. Make sure btx_proof.challenge is the exact envelope returned by the previous 402 — do not mutate it.';
+    case 'unknown_challenge':
+      return 'btxd does not recognize this challenge (it was never issued by this node, or the issued-challenge store was cleared). Call this tool with no btx_proof to get a fresh challenge from the same gateway.';
+    case 'missing_proof':
+      return 'btx_proof.nonce64_hex and btx_proof.digest_hex must both be present and non-empty. Verify your retry payload.';
+    default:
+      return 'The proof was rejected by btxd. Call this tool with no btx_proof to get a fresh challenge.';
+  }
 }
 
 function challengeEnvelope(challenge: unknown): CallToolResult {
@@ -57,19 +91,15 @@ function challengeEnvelope(challenge: unknown): CallToolResult {
     content: [
       {
         type: 'text',
-        text: JSON.stringify(
-          {
-            btx_admission_challenge_required: true,
-            marker: BTX_CHALLENGE_MARKER,
-            challenge,
-            retry_hint:
-              'Solve this BTX challenge with @btx-tools/challenges-sdk (Solver.solve), then call this tool again with btx_proof populated (challenge, nonce64_hex, digest_hex).',
-            do_not_auto_retry:
-              'This is NOT a transient error. Auto-retrying without solving the proof-of-work will loop indefinitely. See https://github.com/btx-tools/btx-mcp-gateway#how-it-works',
-          },
-          null,
-          2,
-        ),
+        text: JSON.stringify({
+          btx_admission_challenge_required: true,
+          marker: BTX_CHALLENGE_MARKER,
+          challenge,
+          retry_hint:
+            'Solve this BTX challenge with @btx-tools/challenges-sdk (Solver.solve), then call this tool again with btx_proof populated (challenge, nonce64_hex, digest_hex).',
+          do_not_auto_retry:
+            'This is NOT a transient error. Auto-retrying without solving the proof-of-work will loop indefinitely. See https://github.com/btx-tools/btx-mcp-gateway#how-it-works',
+        }),
       },
     ],
     isError: true,
@@ -81,22 +111,38 @@ function admissionFailedResponse(reason: string, expired?: boolean): CallToolRes
     content: [
       {
         type: 'text',
-        text: JSON.stringify(
-          {
-            btx_admission_failed: true,
-            marker: BTX_ADMISSION_FAILED_MARKER,
-            reason,
-            expired,
-            recovery_hint:
-              reason === 'already_redeemed'
-                ? 'This proof was already consumed. Call this tool with no btx_proof to get a fresh challenge.'
-                : reason === 'expired'
-                  ? 'The challenge has expired. Call this tool with no btx_proof to get a fresh one.'
-                  : 'The proof was rejected. Call this tool with no btx_proof to get a fresh challenge.',
-          },
-          null,
-          2,
-        ),
+        text: JSON.stringify({
+          btx_admission_failed: true,
+          marker: BTX_ADMISSION_FAILED_MARKER,
+          reason,
+          expired,
+          recovery_hint: recoveryHintFor(reason),
+        }),
+      },
+    ],
+    isError: true,
+  };
+}
+
+/**
+ * Sanitized internal-error response. Audit HIGH-1: the underlying error's
+ * message is NOT included in the agent-visible body because it may carry
+ * btxd hostname / RPC method names / response snippets that we don't want
+ * to leak to untrusted clients. The error is delivered to the optional
+ * `gate.onError` hook instead — adopters wire that to their logging/APM.
+ */
+function internalErrorResponse(stage: 'issue' | 'redeem'): CallToolResult {
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          btx_internal_error: true,
+          marker: BTX_INTERNAL_ERROR_MARKER,
+          stage,
+          message:
+            'Admission gateway encountered an internal error talking to btxd. Retry after a short backoff; if it persists, contact the gateway operator. The full error has been logged server-side.',
+        }),
       },
     ],
     isError: true,
@@ -130,13 +176,9 @@ function admissionFailedResponse(reason: string, expired?: boolean): CallToolRes
  *     resource: ({ query }) => `tool:expensive_search|q_len:${query.length}`,
  *     subject: 'anonymous_agent',
  *     issueParams: { target_solve_time_s: 1.0, expires_in_s: 300 },
+ *     onError: (err) => myAPM.captureException(err),
+ *     onAdmit: (args, result) => myAPM.recordAdmission(args, result),
  *   },
- * });
- *
- * const server = createBtxMcpServer({
- *   name: 'my-gated-tools',
- *   version: '0.1.0',
- *   tools: [search],
  * });
  * ```
  */
@@ -158,38 +200,34 @@ export function btxToolWrapper<InputArgs extends ZodRawShape>(
       btx_proof?: BtxProofPayload;
     };
     const { btx_proof, ...userArgs } = args;
+    const typedUserArgs = userArgs as { [K in keyof InputArgs]: z.infer<InputArgs[K]> };
 
     // First call: no proof → issue and return challenge envelope
     if (!btx_proof) {
       try {
-        const purpose = resolve(def.gate.purpose, userArgs as never);
-        const resource = resolve(def.gate.resource, userArgs as never);
-        const subject = resolve(def.gate.subject, userArgs as never);
+        const purpose = resolve(def.gate.purpose, typedUserArgs);
+        const resource = resolve(def.gate.resource, typedUserArgs);
+        const subject = resolve(def.gate.subject, typedUserArgs);
+        // Audit HIGH-2: explicit (purpose, resource, subject) MUST come AFTER
+        // the spread so issueParams can never override the admission binding,
+        // even via runtime injection or TypeScript bypass.
         const challenge = await def.gate.client.issue({
+          ...def.gate.issueParams,
           purpose,
           resource,
           subject,
-          ...def.gate.issueParams,
         });
         return challengeEnvelope(challenge);
       } catch (err) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                btx_internal_error: true,
-                message: err instanceof Error ? err.message : String(err),
-                stage: 'issue',
-              }),
-            },
-          ],
-          isError: true,
-        };
+        def.gate.onError?.(err, typedUserArgs);
+        return internalErrorResponse('issue');
       }
     }
 
-    // Retry with proof: redeem
+    // Retry with proof: redeem. Cast `as Challenge` is safe at the trust
+    // boundary — btxd's redeem RPC validates the envelope structure itself
+    // and returns reason='unknown_challenge' / 'challenge_mismatch' if the
+    // wire shape is wrong.
     let result;
     try {
       result = await def.gate.client.redeem(
@@ -198,39 +236,31 @@ export function btxToolWrapper<InputArgs extends ZodRawShape>(
         btx_proof.digest_hex,
       );
     } catch (err) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              btx_internal_error: true,
-              message: err instanceof Error ? err.message : String(err),
-              stage: 'redeem',
-            }),
-          },
-        ],
-        isError: true,
-      };
+      def.gate.onError?.(err, typedUserArgs);
+      return internalErrorResponse('redeem');
     }
 
     if (!result.valid) {
       return admissionFailedResponse(String(result.reason), result.expired);
     }
 
-    // Admitted — invoke user handler with stripped args + admission context
-    return def.handler(
-      userArgs as { [K in keyof InputArgs]: z.infer<InputArgs[K]> },
-      {
-        ..._extra,
-        btx: { result },
-      },
-    );
+    // Admitted — fire onAdmit hook, then invoke user handler with stripped
+    // args + admission context.
+    def.gate.onAdmit?.(typedUserArgs, result);
+    return def.handler(typedUserArgs, {
+      ..._extra,
+      btx: { result },
+    });
   };
 
   return {
     name: def.name,
+    title: def.title,
     description: def.description,
     inputSchema: augmentedInputSchema,
+    outputSchema: def.outputSchema,
+    annotations: def.annotations,
+    _meta: def._meta,
     callback,
   };
 }

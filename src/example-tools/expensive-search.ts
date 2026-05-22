@@ -27,8 +27,16 @@ export function expensiveSearchTool(
 ): WrappedBtxTool<any> {
   return btxToolWrapper({
     name: 'expensive_search',
+    title: 'Expensive Search (BTX-gated)',
     description:
       'Search a large index. Stub. Gated to deter automated agent abuse — each call requires a BTX service-challenge proof.',
+    annotations: {
+      title: 'Expensive Search',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       query: z.string().describe('Search query string'),
       limit: z.number().int().min(1).max(100).optional().describe('Max results to return'),

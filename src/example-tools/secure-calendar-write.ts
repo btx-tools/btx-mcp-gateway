@@ -32,8 +32,16 @@ export function secureCalendarWriteTool(
 ): WrappedBtxTool<any> {
   return btxToolWrapper({
     name: 'secure_calendar_write',
+    title: 'Secure Calendar Write (BTX-gated mutation)',
     description:
       'Write a calendar event. Stub. Higher-cost gate than expensive_search — mutations require more BTX compute proof.',
+    annotations: {
+      title: 'Secure Calendar Write',
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     inputSchema: {
       title: z.string().describe('Event title'),
       start_iso: z

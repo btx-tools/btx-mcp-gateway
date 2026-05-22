@@ -34,11 +34,16 @@ async function main(): Promise<void> {
     console.error('error: set BTX_RPC_URL and BTX_RPC_AUTH (e.g. user:pass)');
     process.exit(1);
   }
-  const [user, pass] = rpcAuth.split(':');
-  if (!user || !pass) {
-    console.error('error: BTX_RPC_AUTH must be of the form "user:pass"');
+  // Audit MED-6: split only on the FIRST colon so passwords containing ':'
+  // round-trip correctly. The previous `split(':')` truncated multi-colon
+  // passwords silently.
+  const sepIdx = rpcAuth.indexOf(':');
+  if (sepIdx <= 0 || sepIdx === rpcAuth.length - 1) {
+    console.error('error: BTX_RPC_AUTH must be of the form "user:pass" (both parts non-empty)');
     process.exit(1);
   }
+  const user = rpcAuth.slice(0, sepIdx);
+  const pass = rpcAuth.slice(sepIdx + 1);
 
   const client = new BtxChallengeClient({
     rpcUrl,

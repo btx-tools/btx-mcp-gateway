@@ -11,4 +11,11 @@ export default defineConfig({
   clean: true,
   target: 'es2022',
   treeshake: true,
+  // tsup auto-externalizes peerDependencies + dependencies; listing here is
+  // belt-and-suspenders so a future refactor doesn't silently inline them.
+  external: [
+    '@btx-tools/challenges-sdk',
+    '@modelcontextprotocol/sdk',
+    'zod',
+  ],
 });

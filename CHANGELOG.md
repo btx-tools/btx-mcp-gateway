@@ -2,6 +2,55 @@
 
 All notable changes to `@btx-tools/mcp-gateway` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) + [SemVer](https://semver.org/).
 
+## [0.1.1] - 2026-05-23
+
+Patch release bundling the `zod` peerDep fix plus all 15 findings from the same-day deep audit (`internal notes`). **Recommended upgrade for all `0.1.0` consumers** — fixes one security-adjacent error-leakage path, one defense-in-depth binding-override path, several Express-middleware-parity feature gaps, and a handful of papercuts.
+
+### Security / correctness
+
+- **HIGH-1 (audit) — error messages are no longer leaked to agents.** When `client.issue()` or `client.redeem()` throws, the wrapper used to embed `err.message` directly in the agent-visible `isError` text. That could surface btxd hostnames, RPC method names, and HTTP response bodies. We now return a generic sanitized message + a new `BTX_INTERNAL_ERROR_MARKER`; the raw error is delivered to the new `gate.onError` hook instead. Test: `tests/unit/wrapper.test.ts` "returns sanitized isError" / "fires onError hook with the raw error".
+- **HIGH-2 (audit) — `issueParams` can no longer override the admission binding.** Spread order was `{ purpose, resource, subject, ...issueParams }`, allowing a runtime injection of `issueParams.purpose` to swap the binding. Now spread is `{ ...issueParams, purpose, resource, subject }` so explicit fields always win. TS type `Partial<Omit<IssueParams, 'purpose'|'resource'|'subject'>>` was already correct at compile time; this is defense-in-depth. Test: "issueParams cannot override the (purpose, resource, subject) binding".
+
+### Added — feature gaps closed (Express middleware parity)
+
+- **`gate.onError?: (err, args) => void`** hook fired before the sanitized internal-error response is returned. Mirrors `middleware-express@0.2.0`'s onError. Audit MED-3.
+- **`gate.onAdmit?: (args, result) => void`** hook fired on successful admission, before the user handler runs. Mirrors `middleware-express`'s onAdmit. Audit MED-3 (Angle B #8).
+- **`BtxToolDefinition.title?: string`** forwarded to `McpServer.registerTool({ title })`. Audit MED-4 (Angle E #1).
+- **`BtxToolDefinition.outputSchema?`** forwarded to `McpServer.registerTool({ outputSchema })` — adopters can now declare tool output validation. Audit MED-4 (Angle E #2).
+- **`BtxToolDefinition.annotations?: ToolAnnotations`** forwarded — `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` now propagate so MCP clients can warn before destructive tools. Bundled example tools updated: `expensive_search` is `readOnly`, `secure_calendar_write` is `destructive`. Audit MED-5 (Angle E #3).
+- **`BtxToolDefinition._meta?: Record<string, unknown>`** forwarded for custom metadata (cost tier, billing tag, audit hint). Audit LOW (Angle E #4).
+- **`BTX_INTERNAL_ERROR_MARKER`** exported alongside the existing two markers, so clients can distinguish a sanitized internal error from an admission failure.
+
+### Behavior
+
+- **`recovery_hint` coverage expanded** to cover all known `VerifyReason` values: `invalid_proof`, `challenge_mismatch`, `unknown_challenge`, `missing_proof`, `mismatch_field` now get reason-specific guidance instead of the previous generic hint. Audit MED-3 (Angle A #2 / Angle B #3). Tests: 5 new parameterized cases.
+
+### Fixed
+
+- **`zod` is now a peerDependency** (was a devDependency in `0.1.0`). The `0.1.0` build inadvertently bundled all of zod into the package chunk (~119 KB inlined). With `peerDependencies.zod ^3.23.0`, adopters bring their own version and types unify cleanly. **Chunk size shrunk 122 KB → 3.8 KB** as a result.
+- **`tsup.config.ts` adds explicit `external`** for `@btx-tools/challenges-sdk`, `@modelcontextprotocol/sdk`, and `zod`. Belt-and-suspenders so a future config change can't silently re-inline a peer.
+- **`examples/stdio-server.ts`**: `BTX_RPC_AUTH` parser now splits on the FIRST colon only, so passwords containing `:` round-trip correctly. Previous `split(':')` silently truncated multi-colon passwords. Audit MED-6 (Angle D #4).
+- **`examples/client-demo.ts`**: imports `BTX_CHALLENGE_MARKER` from package root (`../src/index.js`) instead of the internal `../src/wrapper.js`. Adopters who copy this example as their template now see the canonical public import path. Audit LOW (Angle C #6).
+- **`examples/client-demo.ts`**: null-checks `parsed.challenge` before casting in `parseChallengeEnvelope`. A hostile or buggy server returning `{ marker, challenge: null }` now throws a clear envelope-shape error at the parse boundary instead of crashing deep inside `Solver.solve`. Audit LOW (Angle A #3).
+- **`examples/client-demo.ts`**: `StdioClientTransport` now spawns the workspace-local `tsx` binary (`node_modules/.bin/tsx`) instead of relying on `tsx` being on PATH. Audit LOW (sweep).
+- **JSON in all wrapper response bodies is now compact** (dropped `JSON.stringify(_, null, 2)`). Cuts token cost for LLM-based MCP clients. Audit LOW (Angle D #2).
+- **`package.json` `prepublishOnly` now invokes `tsup` directly** instead of `pnpm build`. Works under any toolchain (`npm publish` no longer fails if pnpm isn't on PATH). Audit LOW (sweep).
+- **Removed `.npmignore`** — redundant with the `files` allowlist in `package.json` (which has higher precedence). Removed to prevent future maintainer confusion. Audit LOW (Angle D #7).
+
+### Tests
+
+- **23 tests pass** (was 15 in 0.1.0): 19 unit + 4 integration. **+8 new tests** covering: sanitized error leakage prevention (2), onError hook firing (1), onAdmit hook firing (1), defense-in-depth on issueParams override (1), reason-specific recovery_hint coverage (5 parameterized).
+- Tightened the `expect(result.isError).toBeFalsy()` assertion in the integration test to `expect(result.isError).toBeUndefined()` so a regression that sets `isError: undefined` doesn't pass silently. Audit LOW (Angle A #4).
+
+### Not fixed (knowingly deferred)
+
+- **AbortSignal plumbing** (audit MED-7, Angle E #6) — `extra.signal` from MCP isn't forwarded to `client.issue()` / `client.redeem()`. Requires adding a `signal` option to `@btx-tools/challenges-sdk`'s `BtxChallengeClient`. Tracked separately; will land alongside the SDK API change.
+- **Theoretical RequestHandlerExtra getter-spread issue** (Angle C #5 / Angle E #5) — current MCP SDK uses own properties, no actual bug today. Will revisit if SDK adds prototype-based fields.
+
+### Audit doc
+
+Full findings + verification at `internal notes`.
+
 ## [0.1.0] - 2026-05-23
 
 First production release. Goes from `0.0.1` scaffold (which exported two constants) to a real MCP server framework.

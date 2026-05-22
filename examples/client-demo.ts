@@ -22,7 +22,10 @@ import { Solver, type Challenge } from '@btx-tools/challenges-sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-import { BTX_CHALLENGE_MARKER } from '../src/wrapper.js';
+// Audit LOW: import the marker from the package root (the canonical public
+// surface), not from src/wrapper.js (internal path). Adopters who copy this
+// example as their integration template should see the public import path.
+import { BTX_CHALLENGE_MARKER } from '../src/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -53,6 +56,19 @@ function parseChallengeEnvelope(callResult: CallResult): Challenge {
       `isError result is not a BTX admission challenge (marker=${parsed.marker}). Full body: ${textContent.text.slice(0, 400)}`,
     );
   }
+  // Audit LOW: null-check the challenge field before casting. A hostile or
+  // buggy server could return `{ marker, challenge: null }` and we'd pass
+  // null deep into Solver.solve where it crashes cryptically.
+  if (
+    parsed.challenge === null ||
+    parsed.challenge === undefined ||
+    typeof parsed.challenge !== 'object' ||
+    typeof (parsed.challenge as { challenge_id?: unknown }).challenge_id !== 'string'
+  ) {
+    throw new Error(
+      `BTX admission challenge envelope has no valid 'challenge' field. Full body: ${textContent.text.slice(0, 400)}`,
+    );
+  }
   return parsed.challenge as Challenge;
 }
 
@@ -62,9 +78,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Audit LOW: don't hardcode `command: 'tsx'` — it relies on tsx being on
+  // PATH. Use the current Node binary + the package-local tsx loader path.
+  // This works whether tsx is global, in node_modules/.bin, or via a pnpm
+  // run env. Falls back to plain 'tsx' if package-local path isn't found.
+  const tsxBin = resolvePath(__dirname, '..', 'node_modules', '.bin', 'tsx');
   console.log('[client] spawning stdio-server.ts as child process...');
   const transport = new StdioClientTransport({
-    command: 'tsx',
+    command: tsxBin,
     args: [SERVER_PATH],
     env: { ...process.env } as Record<string, string>,
   });
