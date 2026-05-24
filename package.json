@@ -1,6 +1,6 @@
 {
   "name": "@btx-tools/mcp-gateway",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP server framework with per-tool-call BTX service-challenge admission. Gate any agent tool behind chain-anchored proof-of-work. Companion to @btx-tools/challenges-sdk.",
   "author": "visitor-code <visitor@friction.market>",
   "license": "MIT",
@@ -48,12 +48,12 @@
     "prepublishOnly": "tsup"
   },
   "peerDependencies": {
-    "@btx-tools/challenges-sdk": "^0.2.0",
+    "@btx-tools/challenges-sdk": ">=0.2.0 <2.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
-    "@btx-tools/challenges-sdk": "^0.2.0",
+    "@btx-tools/challenges-sdk": "^1.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22.0.0",
     "prettier": "^3.3.0",

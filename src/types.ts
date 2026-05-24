@@ -53,6 +53,16 @@ export interface BtxGateOptions<Args> {
    */
   issueParams?: Partial<Omit<IssueParams, 'purpose' | 'resource' | 'subject'>>;
   /**
+   * Enforce that the redeemed proof's challenge `binding.{purpose,resource,
+   * subject}` matches what THIS tool call resolves to (audit H-1). Default
+   * **`true`**. Without it, a valid proof issued for one tool/binding could be
+   * replayed to admit a *different*, more-expensive tool on the same btxd
+   * (btxd's redeem can't see which tool is calling). Resolvers must be
+   * deterministic for a given args input. Set `false` only for intentional
+   * cross-tool proof reuse.
+   */
+  enforceBinding?: boolean;
+  /**
    * Optional hook fired exactly once when `client.issue()` or
    * `client.redeem()` throws, before the wrapper returns the sanitized
    * internal-error response. Use this to log/observe the underlying error
@@ -83,7 +93,10 @@ export interface BtxAdmissionContext {
  * Extra context passed to the user's tool handler. Extends the MCP SDK's
  * `RequestHandlerExtra` with a `btx` namespace carrying admission info.
  */
-export type BtxToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification> & {
+export type BtxToolExtra = RequestHandlerExtra<
+  ServerRequest,
+  ServerNotification
+> & {
   btx: BtxAdmissionContext;
 };
 
@@ -160,11 +173,15 @@ export interface WrappedBtxTool<InputArgs extends ZodRawShape> {
   title?: string;
   description: string | undefined;
   /** The user's inputSchema merged with our injected `btx_proof` field. */
-  inputSchema: InputArgs & { btx_proof: z.ZodOptional<z.ZodObject<{
-    challenge: z.ZodUnknown;
-    nonce64_hex: z.ZodString;
-    digest_hex: z.ZodString;
-  }>> };
+  inputSchema: InputArgs & {
+    btx_proof: z.ZodOptional<
+      z.ZodObject<{
+        challenge: z.ZodUnknown;
+        nonce64_hex: z.ZodString;
+        digest_hex: z.ZodString;
+      }>
+    >;
+  };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   outputSchema?: ZodRawShape | any;
   annotations?: ToolAnnotations;

@@ -81,9 +81,34 @@ function recoveryHintFor(reason: string): string {
       return 'btxd does not recognize this challenge (it was never issued by this node, or the issued-challenge store was cleared). Call this tool with no btx_proof to get a fresh challenge from the same gateway.';
     case 'missing_proof':
       return 'btx_proof.nonce64_hex and btx_proof.digest_hex must both be present and non-empty. Verify your retry payload.';
+    case 'challenge_binding_mismatch':
+      return 'This proof was issued for a different (purpose, resource, subject) binding than this tool requires — proofs are not portable across tools. Call THIS tool with no btx_proof to get a challenge bound to it.';
     default:
       return 'The proof was rejected by btxd. Call this tool with no btx_proof to get a fresh challenge.';
   }
+}
+
+/**
+ * Map a redeem `reason` to a closed set before echoing it to the agent (audit
+ * V-3). `reason` is a btxd-controlled string; whitelisting the known
+ * `VerifyReason` values (plus our gateway-side `challenge_binding_mismatch`)
+ * guarantees no free-form btxd internal can ever reach the caller via this field.
+ */
+const KNOWN_REASONS: ReadonlySet<string> = new Set([
+  'ok',
+  'invalid_proof',
+  'challenge_mismatch',
+  'expired',
+  'unknown_challenge',
+  'already_redeemed',
+  'missing_proof',
+  'mismatch_field',
+  'challenge_binding_mismatch',
+]);
+function reasonBucket(reason: unknown): string {
+  return typeof reason === 'string' && KNOWN_REASONS.has(reason)
+    ? reason
+    : 'rejected';
 }
 
 function challengeEnvelope(challenge: unknown): CallToolResult {
@@ -106,7 +131,10 @@ function challengeEnvelope(challenge: unknown): CallToolResult {
   };
 }
 
-function admissionFailedResponse(reason: string, expired?: boolean): CallToolResult {
+function admissionFailedResponse(
+  reason: string,
+  expired?: boolean,
+): CallToolResult {
   return {
     content: [
       {
@@ -193,14 +221,19 @@ export function btxToolWrapper<InputArgs extends ZodRawShape>(
     btx_proof: BtxProofSchema.optional(),
   } as InputArgs & { btx_proof: z.ZodOptional<typeof BtxProofSchema> };
 
-  const callback: WrappedBtxTool<InputArgs>['callback'] = async (rawArgs, _extra) => {
+  const callback: WrappedBtxTool<InputArgs>['callback'] = async (
+    rawArgs,
+    _extra,
+  ) => {
     // The MCP SDK validates rawArgs against augmentedInputSchema before calling
     // us, so we can safely cast.
     const args = rawArgs as Record<string, unknown> & {
       btx_proof?: BtxProofPayload;
     };
     const { btx_proof, ...userArgs } = args;
-    const typedUserArgs = userArgs as { [K in keyof InputArgs]: z.infer<InputArgs[K]> };
+    const typedUserArgs = userArgs as {
+      [K in keyof InputArgs]: z.infer<InputArgs[K]>;
+    };
 
     // 0.2.0: forward MCP transport's AbortSignal to the BTX RPC client so an
     // agent client that cancels a tool call mid-issue or mid-redeem propagates
@@ -232,6 +265,22 @@ export function btxToolWrapper<InputArgs extends ZodRawShape>(
       }
     }
 
+    // H-1 (audit 2026-05-24): enforce the proof's challenge binding matches THIS
+    // tool call BEFORE redeem — btxd's redeem can't see which tool is calling,
+    // so without this a valid proof for a cheap tool admits an expensive one.
+    // Checked pre-redeem so a mismatched proof isn't consumed. Opt out via
+    // gate.enforceBinding:false.
+    if (def.gate.enforceBinding !== false) {
+      const b = (btx_proof.challenge as Challenge).binding;
+      if (
+        b?.purpose !== resolve(def.gate.purpose, typedUserArgs) ||
+        b?.resource !== resolve(def.gate.resource, typedUserArgs) ||
+        b?.subject !== resolve(def.gate.subject, typedUserArgs)
+      ) {
+        return admissionFailedResponse('challenge_binding_mismatch');
+      }
+    }
+
     // Retry with proof: redeem. Cast `as Challenge` is safe at the trust
     // boundary — btxd's redeem RPC validates the envelope structure itself
     // and returns reason='unknown_challenge' / 'challenge_mismatch' if the
@@ -249,13 +298,29 @@ export function btxToolWrapper<InputArgs extends ZodRawShape>(
       return internalErrorResponse('redeem');
     }
 
-    if (!result.valid) {
-      return admissionFailedResponse(String(result.reason), result.expired);
+    // M-3 + M-4 (audit 2026-05-24): strict success whitelist + sanitized glue.
+    // A null/odd `result` or a verify-only `redeemed:false` must NOT admit, and
+    // a throwing `onAdmit` hook must not escape raw to the agent via the MCP SDK
+    // — so the decision + hook run inside a sanitizing try. (The user handler
+    // runs OUTSIDE: its errors are tool-domain, handled by the MCP SDK.)
+    try {
+      if (
+        result == null ||
+        result.valid !== true ||
+        result.redeemed === false
+      ) {
+        return admissionFailedResponse(
+          reasonBucket(result?.reason),
+          result?.expired,
+        );
+      }
+      def.gate.onAdmit?.(typedUserArgs, result);
+    } catch (err) {
+      def.gate.onError?.(err, typedUserArgs);
+      return internalErrorResponse('redeem');
     }
 
-    // Admitted — fire onAdmit hook, then invoke user handler with stripped
-    // args + admission context.
-    def.gate.onAdmit?.(typedUserArgs, result);
+    // Admitted — invoke the user handler with stripped args + admission context.
     return def.handler(typedUserArgs, {
       ..._extra,
       btx: { result },

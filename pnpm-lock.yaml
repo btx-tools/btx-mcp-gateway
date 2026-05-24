@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       '@btx-tools/challenges-sdk':
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^1.2.0
+        version: 1.2.0
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@3.25.76)
@@ -38,9 +38,12 @@ importers:
 
 packages:
 
-  '@btx-tools/challenges-sdk@0.2.0':
-    resolution: {integrity: sha512-ISWTawWImfGPtg2JRNz6nz+DFsoFbIiPNMTS2Jclc3uhvlVE4eqr0U53iVoc8aCyFlY/voLvy53XecEGTGzrCw==}
-    engines: {node: '>=18.17'}
+  '@btx-tools/challenges-sdk@1.2.0':
+    resolution: {integrity: sha512-yaoGUxSVIFW61XcLGUCB00l4mf2QmjTjiDGmK+5wWA9ht5fX2vfDw/TMB5pkH8GfMYngAfVgAM6egMhq78hQ+Q==}
+    engines: {node: '>=20.19.0'}
+
+  '@btx-tools/matmul-wasm@0.1.2':
+    resolution: {integrity: sha512-nMI2M610vzluRK6C0viMZEIslSXSi9uTFuvZVRr3T++mAQ+aDobC9Ga5Suj5Ji5sWCzVwnQW6uTiYBFr2soSmg==}
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -1403,9 +1406,14 @@ packages:
 
 snapshots:
 
-  '@btx-tools/challenges-sdk@0.2.0':
+  '@btx-tools/challenges-sdk@1.2.0':
     dependencies:
       '@noble/hashes': 2.2.0
+    optionalDependencies:
+      '@btx-tools/matmul-wasm': 0.1.2
+
+  '@btx-tools/matmul-wasm@0.1.2':
+    optional: true
 
   '@esbuild/aix-ppc64@0.21.5':
     optional: true

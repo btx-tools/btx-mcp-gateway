@@ -2,6 +2,32 @@
 
 All notable changes to `@btx-tools/mcp-gateway` are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) + [SemVer](https://semver.org/).
 
+## [0.3.0] - 2026-05-24 — audit remediation — pending publish
+
+Security hardening from the 2026-05-24 org-wide deep audit
+(`internal notes`). The gate was
+already fail-closed; these tighten the admission decision + close a proof-reuse
+gap. No Critical/High were open.
+
+### Security / behavior
+
+- **H-1 — enforce challenge binding (default-on).** Before redeem, the gateway
+  now checks the proof's challenge `binding.{purpose,resource,subject}` against
+  what THIS tool call resolves to, and denies `challenge_binding_mismatch` on a
+  mismatch (checked pre-redeem so a wrong-tool proof isn't consumed). Closes
+  cross-tool proof reuse — a proof for a cheap tool could previously admit an
+  expensive one on the same btxd. **Behavior change:** binding resolvers must be
+  deterministic per args; opt out with `enforceBinding: false`.
+- **M-3 — strict admit.** Admit only on `result.valid === true` (and not
+  `redeemed === false`); a null/odd redeem result denies.
+- **M-4 — the error sanitizer can no longer be flanked.** The post-redeem
+  decision + `onAdmit` hook run inside a sanitizing try/catch, so a null result
+  or a throwing hook returns the generic internal-error response instead of
+  leaking `error.message` to the agent via the MCP SDK. (The user handler still
+  runs outside — its errors are tool-domain.)
+- **V-3 — `reason` is bucketed to a closed set** before being echoed to the
+  agent, so no free-form btxd string can reach the caller.
+
 ## [0.2.0] - 2026-05-23
 
 Minor release — AbortSignal plumbing end-to-end. Closes the last remaining audit finding from `internal notes` (MED-8).
