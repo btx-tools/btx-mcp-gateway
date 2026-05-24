@@ -5,7 +5,7 @@
 
 MCP server framework that gates every tool invocation behind a [BTX](https://btx.dev) service-challenge proof. Companion to [`@btx-tools/challenges-sdk`](https://www.npmjs.com/package/@btx-tools/challenges-sdk).
 
-> **Status**: `0.1.0` — first production release. 15 tests across unit + integration. Built against `@modelcontextprotocol/sdk@^1.29.0`.
+> **Status**: `0.3.0` — audited (H-1 challenge-binding + Med/Low remediation). 15 tests across unit + integration. Built against `@modelcontextprotocol/sdk@^1.29.0`.
 
 ## Why
 

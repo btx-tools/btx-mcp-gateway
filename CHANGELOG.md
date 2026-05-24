@@ -5,7 +5,7 @@ All notable changes to `@btx-tools/mcp-gateway` are documented here. Format foll
 ## [0.3.0] - 2026-05-24 — audit remediation — pending publish
 
 Security hardening from the 2026-05-24 org-wide deep audit
-(`internal notes`). The gate was
+(`internal audit notes`). The gate was
 already fail-closed; these tighten the admission decision + close a proof-reuse
 gap. No Critical/High were open.
 
@@ -30,7 +30,7 @@ gap. No Critical/High were open.
 
 ## [0.2.0] - 2026-05-23
 
-Minor release — AbortSignal plumbing end-to-end. Closes the last remaining audit finding from `internal notes` (MED-8).
+Minor release — AbortSignal plumbing end-to-end. Closes the last remaining audit finding from `internal audit notes` (MED-8).
 
 ### Added
 
@@ -58,7 +58,7 @@ All findings from the 2026-05-23 deep audit now CLOSED. The previously-deferred 
 
 ## [0.1.1] - 2026-05-23
 
-Patch release bundling the `zod` peerDep fix plus all 15 findings from the same-day deep audit (`internal notes`). **Recommended upgrade for all `0.1.0` consumers** — fixes one security-adjacent error-leakage path, one defense-in-depth binding-override path, several Express-middleware-parity feature gaps, and a handful of papercuts.
+Patch release bundling the `zod` peerDep fix plus all 15 findings from the same-day deep audit (`internal audit notes`). **Recommended upgrade for all `0.1.0` consumers** — fixes one security-adjacent error-leakage path, one defense-in-depth binding-override path, several Express-middleware-parity feature gaps, and a handful of papercuts.
 
 ### Security / correctness
 
@@ -103,7 +103,7 @@ Patch release bundling the `zod` peerDep fix plus all 15 findings from the same-
 
 ### Audit doc
 
-Full findings + verification at `internal notes`.
+Full findings + verification at `internal audit notes`.
 
 ## [0.1.0] - 2026-05-23
 
