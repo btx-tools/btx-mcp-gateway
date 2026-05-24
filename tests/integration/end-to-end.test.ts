@@ -12,10 +12,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import type {
-  BtxChallengeClient,
-  Challenge,
-} from '@btx-tools/challenges-sdk';
+import type { BtxChallengeClient, Challenge } from '@btx-tools/challenges-sdk';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -34,9 +31,12 @@ const STUB_CHALLENGE: Challenge = {
   expires_in_s: 3600,
   binding: {
     chain: 'btx-mainnet',
+    // Must match the gate's resolved (purpose, resource, subject) below so the
+    // default-on H-1 binding check admits — the issued challenge is bound to the
+    // tool's gate values.
     purpose: 'agent_tool_call',
-    resource: 'tool:test',
-    subject: 'anonymous',
+    resource: 'tool:test_search',
+    subject: 'test',
     resource_hash: 'aa',
     subject_hash: 'bb',
     salt: 'cc',
@@ -105,13 +105,27 @@ function buildClient(redeemBehavior: RedeemBehavior): BtxChallengeClient {
     },
     verify: async () => ({ valid: false, reason: 'invalid_proof' }),
     solve: async () => ({ nonce64_hex: 'aa', digest_hex: 'bb', proof: {} }),
-    verifyBatch: async () => ({ count: 0, valid: 0, invalid: 0, by_reason: {}, results: [] }),
-    redeemBatch: async () => ({ count: 0, valid: 0, invalid: 0, by_reason: {}, results: [] }),
+    verifyBatch: async () => ({
+      count: 0,
+      valid: 0,
+      invalid: 0,
+      by_reason: {},
+      results: [],
+    }),
+    redeemBatch: async () => ({
+      count: 0,
+      valid: 0,
+      invalid: 0,
+      by_reason: {},
+      results: [],
+    }),
     call: async () => ({}),
   } as unknown as BtxChallengeClient;
 }
 
-async function wireClientServer(redeemBehavior: RedeemBehavior): Promise<Client> {
+async function wireClientServer(
+  redeemBehavior: RedeemBehavior,
+): Promise<Client> {
   const btxClient = buildClient(redeemBehavior);
   const server = createBtxMcpServer({
     name: 'integration-test',
@@ -135,7 +149,8 @@ async function wireClientServer(redeemBehavior: RedeemBehavior): Promise<Client>
     ],
   });
 
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
 
   const client = new Client(
